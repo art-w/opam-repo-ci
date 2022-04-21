@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # serve local opam-repository for workers...
-if [ -d /app/opam-repository ]; then
-  cd /app/opam-repository
+if [ -d /opam-repository ]; then
+  cd /opam-repository
   git daemon --verbose --export-all --base-path=.git --reuseaddr --strict-paths .git/ &
 fi
 
@@ -40,7 +40,7 @@ do
     --port=8080 \
     --confirm=none \
     --submission-service=/app/dev/capnp-secrets/submission.cap \
-    --path=/app/opam-repository \
+    --path=/opam-repository \
     --capnp-address=tcp:pipeline:5001 \
     --repo=local/opam-repository &
 

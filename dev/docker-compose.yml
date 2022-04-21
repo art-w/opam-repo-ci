@@ -9,7 +9,7 @@ services:
     volumes:
       - "../:/app"
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "${OPAM_REPO?required}:/app/opam-repository"
+      - "${OPAM_REPO?required}:/opam-repository"
     ports:
       - "5001:5001"
       - "8080:8080"
