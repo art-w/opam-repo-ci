@@ -22,5 +22,9 @@ do
 
   inotifywait -q -e CLOSE_WRITE _build/default/web-ui | grep -q main.exe \
   && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
+  && sleep 1 \
+  && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
+  && sleep 1 \
+  && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
   && sleep 1
 done
