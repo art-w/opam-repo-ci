@@ -21,6 +21,7 @@ let run ?listen_address = function
     let restore = Capnp_rpc_net.Restorer.single service_id rpc_engine in
     Capnp_rpc_unix.serve config ~restore >>= fun vat ->
     Capnp_rpc_unix.Cap_file.save_service vat service_id Conf.Capnp.cap_file |> or_die;
+    Lwt_unix.chmod Conf.Capnp.cap_file 0o666 >>= fun () ->
     Logs.app (fun f -> f "Wrote capability reference to %S" Conf.Capnp.cap_file);
     Lwt.return (vat, Some rpc_engine_resolver)
 

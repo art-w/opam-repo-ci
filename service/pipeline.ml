@@ -317,12 +317,7 @@ let get_prs repo =
   in
   master, prs
 
-let test_repo ~ocluster ~push_status repo =
-  let master, prs = get_prs repo in
-  let master = latch ~label:"master" master in  (* Don't cancel builds while fetching updates to this *)
-  let prs = set_active_refs ~repo prs in
-  prs |> Current.list_iter ~collapse_key:"pr" (module Github.Api.Commit) @@ fun head ->
-  let commit_id = Current.map Github.Api.Commit.id head in
+let test_pr ~ocluster ~repo ~master commit_id =
   let src = Git.fetch commit_id in
   let analysis = Analyse.examine ~master src in
   let lint =
@@ -339,13 +334,23 @@ let test_repo ~ocluster ~push_status repo =
     | Error (`Msg _) -> `Failed
   in
   let index =
-    let+ commit = head
+    let+ repo = repo
+    and+ hash = Current.map Current_git.Commit_id.hash commit_id
     and+ jobs = Current.map (Node.flatten (fun ~job_id ~result:_ -> job_id)) builds
     and+ status = status in
-    let repo = Current_github.Api.Commit.repo_id commit in
-    let hash = Current_github.Api.Commit.hash commit in
     Index.record ~repo ~hash ~status jobs
-  and set_github_status =
+  in
+  (summary, index)
+
+let test_repo ~ocluster ~push_status repo =
+  let master, prs = get_prs repo in
+  let master = latch ~label:"master" master in  (* Don't cancel builds while fetching updates to this *)
+  let prs = set_active_refs ~repo prs in
+  prs |> Current.list_iter ~collapse_key:"pr" (module Github.Api.Commit) @@ fun head ->
+  let repo = Current.map Current_github.Api.Commit.repo_id head in
+  let commit_id = Current.map Github.Api.Commit.id head in
+  let summary, index = test_pr ~ocluster ~repo ~master commit_id in
+  let set_github_status =
     summary
     |> github_status_of_state ~head
     |> (if push_status then Github.Api.Commit.set_status head "opam-ci"
@@ -353,11 +358,26 @@ let test_repo ~ocluster ~push_status repo =
   in
   Current.all [index; set_github_status]
 
-let local_test ~ocluster repo () =
-  let { Github.Repo_id.owner; name = _ } = Github.Api.Repo.id repo in
+let local_test ~ocluster ~repo path () =
+  let { Github.Repo_id.owner; name = _ } = repo in
   Index.set_active_accounts @@ Index.Account_set.singleton owner;
   let ocluster = Build.config ~timeout:Conf.build_timeout ocluster in
-  test_repo ~ocluster ~push_status:false (Current.return repo)
+  let local = Git.Local.v path in
+  let head = Git.Local.head_commit local in
+  Logs.warn (fun f -> f "THIS IS NEW!!");
+  let commit_id =
+    let+ commit = Current.map Git.Commit.id head in
+    let module C = Current_git.Commit_id in
+    let gref = C.gref commit in
+    let hash = C.hash commit in
+    Index.set_active_refs ~repo [(gref, hash)];
+    C.v ~repo:"git://pipeline/" ~gref ~hash
+  in
+  let master = Git.Local.commit_of_ref local "refs/heads/master" in
+  let repo = Current.return repo in
+  let summary, index = test_pr ~ocluster ~repo ~master commit_id in
+  let+ _ = summary and+ _ = index in
+  ()
 
 let v ~ocluster ~app () =
   let ocluster = Build.config ~timeout:Conf.build_timeout ocluster in

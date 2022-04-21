@@ -1,0 +1,65 @@
+version: "3.8"
+services:
+
+  pipeline:
+    hostname: pipeline
+    build:
+      context: ..
+      dockerfile: ./dev/Dockerfile.pipeline
+    volumes:
+      - "../:/app"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "${OPAM_REPO?required}:/app/opam-repository"
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+      - "9418:9418"
+    restart: always
+    depends_on:
+      ocluster:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: ./dev/Dockerfile.frontend
+    volumes:
+      - "../:/app"
+    ports:
+      - "8090:8090"
+    restart: always
+    depends_on:
+      pipeline:
+        condition: service_started
+
+  ocluster:
+    build:
+      context: ..
+      dockerfile: ./dev/Dockerfile.ocluster
+    command:
+      - "--capnp-secret-key-file=/app/capnp-secrets/secret-key.pem"
+      - "--capnp-listen-address=tcp:0.0.0.0:9000"
+      - "--capnp-public-address=tcp:ocluster:9000"
+      - "--state-dir=/app"
+      - "--pools=linux-x86_64,linux-arm64,linux-ppc64,linux-s390x"
+      - "--verbose"
+    ports:
+      - "9000:9000"
+    volumes:
+      - "./capnp-secrets/:/app/capnp-secrets"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: ./dev/Dockerfile.worker
+    restart: always
+    command:
+      - "--name=local_linux-x86_64"
+      - "--connect=/app/capnp-secrets/pool-linux-x86_64.cap"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./capnp-secrets:/app/capnp-secrets"
+    privileged: true
+    depends_on:
+      ocluster:
+        condition: service_started

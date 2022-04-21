@@ -1,7 +1,11 @@
 val local_test :
   ocluster:Cluster_api.Raw.Client.Submission.t Capnp_rpc_lwt.Sturdy_ref.t ->
-  Current_github.Api.Repo.t -> unit -> unit Current.t
-(** [local_test ~ocluster repo] is a pipeline that tests GitHub repository [repo] as the CI would. *)
+  repo:Current_github.Repo_id.t ->
+  Fpath.t ->
+  unit ->
+  unit Current.t
+(** [local_test ~ocluster repo] is a pipeline that tests the local git repository [repo] as the CI would.
+    The git HEAD is the "PR" to be compared with master. *)
 
 val v :
   ocluster:Cluster_api.Raw.Client.Submission.t Capnp_rpc_lwt.Sturdy_ref.t ->
