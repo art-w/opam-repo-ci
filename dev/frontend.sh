@@ -13,19 +13,18 @@ while :
 do
   until [ -f _build/default/web-ui/main.exe ]
   do
-    echo 'Waiting for build...'
     sleep 1
   done
 
   _build/default/web-ui/main.exe --backend /app/dev/capnp-secrets/opam-repo-ci-admin.cap &
+  PID=$!
 
   echo 'Waiting for changes...'
 
-  inotifywait -q -e CLOSE_WRITE _build/default/web-ui | grep -q main.exe \
-  && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
-  && sleep 1 \
-  && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
-  && sleep 1 \
-  && (pkill -f '^_build/default/web-ui/main.exe' || echo 'Not running?') \
-  && sleep 1
+  inotifywait -q -e CLOSE_WRITE _build/default/web-ui | grep -q main.exe
+
+  sleep 1
+
+  kill "$PID"
+  wait "$PID"
 done

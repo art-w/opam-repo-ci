@@ -33,7 +33,6 @@ do
 
   until [ -f _build/default/service/local.exe ]
   do
-    echo 'Waiting for build...'
     sleep 1
   done
 
@@ -44,14 +43,14 @@ do
     --path=/opam-repository \
     --capnp-address=tcp:pipeline:5001 \
     --repo=local/opam-repository &
+  PID=$!
 
   echo 'Waiting for changes...'
 
   inotifywait -q -e CLOSE_WRITE _build/default/service | grep -q local.exe \
-  && (pkill -f '^_build/default/service/local.exe' || echo 'Not running?') \
-  && sleep 1 \
-  && (pkill -f '^_build/default/service/local.exe' || echo 'Not running?') \
-  && sleep 1 \
-  && (pkill -f '^_build/default/service/local.exe' || echo 'Not running?') \
-  && sleep 1
+
+  sleep 1
+
+  kill "$PID"
+  wait "$PID"
 done

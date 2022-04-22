@@ -364,7 +364,6 @@ let local_test ~ocluster ~repo path () =
   let ocluster = Build.config ~timeout:Conf.build_timeout ocluster in
   let local = Git.Local.v path in
   let head = Git.Local.head_commit local in
-  Logs.warn (fun f -> f "THIS IS NEW!!");
   let commit_id =
     let+ commit = Current.map Git.Commit.id head in
     let module C = Current_git.Commit_id in
