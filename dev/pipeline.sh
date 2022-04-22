@@ -25,6 +25,7 @@ chmod -R a+rw /app/dev/capnp-secrets
 
 ulimit -n 102400
 
+export PWD=/app
 dune build --watch service/local.exe &
 
 while :
