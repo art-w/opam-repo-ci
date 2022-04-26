@@ -6,6 +6,16 @@ services:
     build:
       context: ..
       dockerfile: ./dev/Dockerfile.pipeline
+    command:
+      - "./dev/pipeline.sh"
+    environment:
+      - "OPAM_REPO=${OPAM_REPO}"
+      - "MODE=${MODE:-local}"
+      - "NGROK_AUTH=${NGROK_AUTH}"
+      - "GITHUB_ACCOUNT=${GITHUB_ACCOUNT}"
+      - "GITHUB_APP_ID=${GITHUB_APP_ID}"
+      - "GITHUB_PRIVATE_KEY_FILE=${GITHUB_PRIVATE_KEY_FILE}"
+      - "GITHUB_WEBHOOK_SECRET_FILE=${GITHUB_WEBHOOK_SECRET_FILE}"
     volumes:
       - "../:/app"
       - "/var/run/docker.sock:/var/run/docker.sock"
@@ -14,29 +24,33 @@ services:
       - "5001:5001"
       - "8080:8080"
       - "9418:9418"
+      - "8090:8090"
     restart: always
     depends_on:
       ocluster:
         condition: service_started
 
-  frontend:
-    build:
-      context: ..
-      dockerfile: ./dev/Dockerfile.frontend
-    volumes:
-      - "../:/app"
-    ports:
-      - "8090:8090"
-    restart: always
-    depends_on:
-      pipeline:
-        condition: service_started
+        # frontend:
+        #   build:
+        #     context: ..
+        #     dockerfile: ./dev/Dockerfile.pipeline
+        #   command:
+        #     - "./dev/frontend.sh"
+        #   volumes:
+        #     - "../:/app"
+        #   ports:
+        #     - "8090:8090"
+        #   restart: always
+        #   depends_on:
+        #     pipeline:
+        #       condition: service_started
 
   ocluster:
     build:
       context: ..
       dockerfile: ./dev/Dockerfile.ocluster
     command:
+      - "ocluster-scheduler"
       - "--capnp-secret-key-file=/app/capnp-secrets/secret-key.pem"
       - "--capnp-listen-address=tcp:0.0.0.0:9000"
       - "--capnp-public-address=tcp:ocluster:9000"
@@ -46,19 +60,26 @@ services:
     ports:
       - "9000:9000"
     volumes:
-      - "./capnp-secrets/:/app/capnp-secrets"
+      - "../capnp-secrets/:/app/capnp-secrets"
 
   worker:
     build:
       context: ..
-      dockerfile: ./dev/Dockerfile.worker
+      dockerfile: ./dev/Dockerfile.ocluster
     restart: always
     command:
+      - "ocluster-worker"
+      - "--obuilder-store=rsync:/obuilder/store"
+      - "--state-dir=/obuilder/state"
       - "--name=local_linux-x86_64"
       - "--connect=/app/capnp-secrets/pool-linux-x86_64.cap"
+      - "--capacity=1"
+      - "--fast-sync"
+      - "--verbose"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./capnp-secrets:/app/capnp-secrets"
+      - "../capnp-secrets:/app/capnp-secrets"
+      - "/obuilder:/obuilder"
     privileged: true
     depends_on:
       ocluster:

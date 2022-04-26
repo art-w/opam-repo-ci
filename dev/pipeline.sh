@@ -1,15 +1,17 @@
 #!/bin/sh
 
 # serve local opam-repository for workers...
-if [ -d /opam-repository ]; then
+if [ "$MODE" = "local" ]; then
   cd /opam-repository
   git daemon --verbose --export-all --base-path=.git --reuseaddr --strict-paths .git/ &
 fi
 
 cd /app
 
+./dev/frontend.sh &
+
 # wait for the cluster to generate the file
-until [ -f /app/dev/capnp-secrets/admin.cap ]
+until [ -f /app/capnp-secrets/admin.cap ]
 do
      sleep 1
 done
@@ -17,32 +19,65 @@ done
 USER=opam-repo-ci
 
 # submission.cap is used to submit jobs to the workers
-ocluster-admin --connect /app/dev/capnp-secrets/admin.cap remove-client "$USER"
-ocluster-admin --connect /app/dev/capnp-secrets/admin.cap add-client "$USER" > /app/dev/capnp-secrets/submission.cap
+ocluster-admin --connect /app/capnp-secrets/admin.cap remove-client "$USER"
+ocluster-admin --connect /app/capnp-secrets/admin.cap add-client "$USER" > /app/capnp-secrets/submission.cap
 
 # give permission to workers
-chmod -R a+rw /app/dev/capnp-secrets
+chmod -R a+rw /app/capnp-secrets
 
 ulimit -n 102400
 
+EXE='local'
+ARG='--path=/opam-repository --repo=art-w/opam-repository'
+
+if [ "$MODE" = "github" ]; then
+
+  EXE='main'
+  ARG="--github-app-id=${GITHUB_APP_ID}"
+  ARG="$ARG --github-account-allowlist=${GITHUB_ACCOUNT}"
+  ARG="$ARG --github-private-key-file=${GITHUB_PRIVATE_KEY_FILE}"
+  ARG="$ARG --github-webhook-secret-file=${GITHUB_WEBHOOK_SECRET_FILE}"
+
+  # public IP to receive GitHub webhooks on port 8080
+  ngrok authtoken "$NGROK_AUTH"
+  ngrok http 8080 --log=stdout > /tmp/ngrok.log &
+  URL=$(tail -F /tmp/ngrok.log | grep -m 1 -o -E 'https://[^ ]*.ngrok.io$')
+  WEBHOOK="${URL}/webhooks/github"
+  
+  # update GitHub webhook url
+  SECRET=$(cat "$GITHUB_WEBHOOK_SECRET_FILE")
+  JWT=$(dune exec --root=. --display=quiet ./dev/jwt.exe "$GITHUB_APP_ID" "$GITHUB_PRIVATE_KEY_FILE")
+  curl \
+    -X PATCH \
+    -H "Authorization: Bearer $JWT" \
+    -H "Accept: application/vnd.github.v3+json" \
+    https://api.github.com/app/hook/config \
+    -d "{\"url\":\"${WEBHOOK}\",\"secret\":\"${SECRET}\"}"
+
+fi
+
 export PWD=/app
-dune build --watch service/local.exe &
+dune build --watch service/$EXE.exe &
 
 while :
 do
 
-  until [ -f _build/default/service/local.exe ]
+  until [ -f _build/default/service/$EXE.exe ]
   do
     sleep 1
   done
 
-  _build/default/service/local.exe \
+  echo _build/default/service/$EXE.exe $ARG \
     --port=8080 \
     --confirm=none \
-    --submission-service=/app/dev/capnp-secrets/submission.cap \
-    --path=/opam-repository \
-    --capnp-address=tcp:pipeline:5001 \
-    --repo=local/opam-repository &
+    --submission-service=/app/capnp-secrets/submission.cap \
+    --capnp-address=tcp:pipeline:5001
+
+  _build/default/service/$EXE.exe $ARG \
+    --port=8080 \
+    --confirm=none \
+    --submission-service=/app/capnp-secrets/submission.cap \
+    --capnp-address=tcp:pipeline:5001 &
   PID=$!
 
   echo 'Waiting for changes...'

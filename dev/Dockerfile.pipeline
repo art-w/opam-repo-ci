@@ -11,11 +11,16 @@ RUN opam install dune>=2.8 ppx_expect>=v0.14.1 prometheus ppx_sexp_conv dune-bui
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
         > /etc/apt/sources.list.d/docker.list \
+    && ( curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc > /etc/apt/trusted.gpg.d/ngrok.asc ) \
+    && ( echo "deb https://ngrok-agent.s3.amazonaws.com buster main" > /etc/apt/sources.list.d/ngrok.list ) \
     && apt-get update \
-    && apt-get install docker-ce-cli --assume-yes \
+    && apt-get install docker-ce-cli ngrok --assume-yes \
     && rm -r /var/lib/apt/lists /var/cache/apt
 
 WORKDIR /app
 RUN git config --global user.name "ocaml" && git config --global user.email "ci"
 ENV OCAMLRUNPARAM=a=2
-ENTRYPOINT ["opam", "exec", "--", "/app/dev/pipeline.sh"]
+# ENV MODE="$MODE"
+# ENV NGROK="$NGROK"
+# ENV GITHUB_APP_ID="$GITHUB_APP_ID" GITHUB_PRIVATE_KEY_FILE="$GITHUB_PRIVATE_KEY_FILE" GITHUB_WEBHOOK_SECRET_FILE="$GITHUB_WEBHOOK_SECRET_FILE"
+ENTRYPOINT ["opam", "exec", "--"]

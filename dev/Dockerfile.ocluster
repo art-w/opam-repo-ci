@@ -21,4 +21,4 @@ WORKDIR /app
 COPY ocluster/ /app/ocluster
 RUN cd /app/ocluster && opam pin -ny . && opam install -y .
 
-ENTRYPOINT ["opam", "exec", "--", "ocluster-scheduler"]
+ENTRYPOINT ["opam", "exec", "--"]

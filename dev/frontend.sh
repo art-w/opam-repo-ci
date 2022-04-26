@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # wait for the pipeline to generate the file
-until [ -f /app/dev/capnp-secrets/opam-repo-ci-admin.cap ]
+until [ -f /app/capnp-secrets/opam-repo-ci-admin.cap ]
 do
   sleep 1
 done
@@ -16,7 +16,7 @@ do
     sleep 1
   done
 
-  _build/default/web-ui/main.exe --backend /app/dev/capnp-secrets/opam-repo-ci-admin.cap &
+  _build/default/web-ui/main.exe --backend /app/capnp-secrets/opam-repo-ci-admin.cap &
   PID=$!
 
   echo 'Waiting for changes...'

@@ -12,7 +12,7 @@ module Capnp = struct
   let cap_secrets =
     match profile with
     | `Production | `Staging -> "/capnp-secrets"
-    | `Dev -> "./dev/capnp-secrets"
+    | `Dev -> "./capnp-secrets"
 
   let secret_key = cap_secrets ^ "/secret-key.pem"
   let cap_file = cap_secrets ^ "/opam-repo-ci-admin.cap"
