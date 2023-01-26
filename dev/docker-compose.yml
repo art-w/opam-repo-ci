@@ -4,8 +4,8 @@ services:
   pipeline:
     hostname: pipeline
     build:
-      context: ..
-      dockerfile: ./dev/Dockerfile.pipeline
+      context: .
+      dockerfile: ./Dockerfile.pipeline
     command:
       - "./dev/pipeline.sh"
     environment:
@@ -74,12 +74,11 @@ services:
       - "--name=local_linux-x86_64"
       - "--connect=/app/capnp-secrets/pool-linux-x86_64.cap"
       - "--capacity=1"
-      - "--fast-sync"
       - "--verbose"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "../capnp-secrets:/app/capnp-secrets"
-      - "/obuilder:/obuilder"
+      - "${OBUILDER_STORE?required}:/obuilder"
     privileged: true
     depends_on:
       ocluster:

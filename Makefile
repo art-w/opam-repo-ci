@@ -8,7 +8,7 @@ deploy-stack:
 
 .PHONY: dev-start
 dev-start:
-	rm -Rf dev/capnp-secrets
+	rm -Rf capnp-secrets
 	docker-compose \
 		--project-name=opam-repo-ci \
 		--file=./dev/docker-compose.yml \

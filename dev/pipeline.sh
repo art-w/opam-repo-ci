@@ -8,8 +8,6 @@ fi
 
 cd /app
 
-./dev/frontend.sh &
-
 # wait for the cluster to generate the file
 until [ -f /app/capnp-secrets/admin.cap ]
 do
@@ -57,7 +55,9 @@ if [ "$MODE" = "github" ]; then
 fi
 
 export PWD=/app
-dune build --watch service/$EXE.exe &
+dune build --watch service/$EXE.exe ./web-ui/main.exe &
+
+./dev/frontend.sh &
 
 while :
 do
@@ -71,21 +71,21 @@ do
     --port=8080 \
     --confirm=none \
     --submission-service=/app/capnp-secrets/submission.cap \
-    --capnp-address=tcp:pipeline:5001
+    --capnp-address=tcp:localhost:5001
 
   _build/default/service/$EXE.exe $ARG \
     --port=8080 \
     --confirm=none \
     --submission-service=/app/capnp-secrets/submission.cap \
-    --capnp-address=tcp:pipeline:5001 &
+    --capnp-address=tcp:127.0.0.1:5001 &
   PID=$!
 
   echo 'Waiting for changes...'
 
   inotifywait -q -e CLOSE_WRITE _build/default/service | grep -q local.exe \
 
-  sleep 1
-
   kill "$PID"
   wait "$PID"
+
+  sleep 1
 done

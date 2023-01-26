@@ -6,8 +6,8 @@ do
   sleep 1
 done
 
-export PWD=/app
-dune build --watch ./web-ui/main.exe &
+# export PWD=/app
+# dune build --watch ./web-ui/main.exe &
 
 while :
 do
@@ -23,8 +23,8 @@ do
 
   inotifywait -q -e CLOSE_WRITE _build/default/web-ui | grep -q main.exe
 
-  sleep 1
-
   kill "$PID"
   wait "$PID"
+
+  sleep 1
 done
