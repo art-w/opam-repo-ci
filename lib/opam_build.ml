@@ -1,3 +1,5 @@
+let fmt = Printf.sprintf
+
 let download_cache = "opam-archives"
 let cache = [ Obuilder_spec.Cache.v download_cache ~target:"/home/opam/.opam/download-cache" ]
 let network = ["host"]
@@ -8,11 +10,18 @@ let opam_install ~variant ~opam_version ~pin ~lower_bounds ~with_tests ~pkg =
   let open Obuilder_spec in
   (if lower_bounds then
      [
-       env "OPAMCRITERIA" "+removed,+count[version-lag,solution]";
+       env "OPAMCRITERIA"        "+removed,+count[version-lag,solution]";
+       env "OPAMFIXUPCRITERIA"   "+removed,+count[version-lag,solution]";
+       env "OPAMUPGRADECRITERIA" "+removed,+count[version-lag,solution]";
        env "OPAMEXTERNALSOLVER" "builtin-0install";
      ]
    else
-     []
+     [
+       (* TODO: Hot fix https://github.com/ocaml/opam/issues/5224 *)
+       env "OPAMCRITERIA"        "-removed,-count[avoid-version,changed],-count[version-lag,request],-count[version-lag,changed],-count[missing-depexts,changed],-changed";
+       env "OPAMFIXUPCRITERIA"   "-removed,-count[avoid-version,changed],-count[version-lag,request],-count[version-lag,changed],-count[missing-depexts,changed],-changed";
+       env "OPAMUPGRADECRITERIA" "-removed,-count[avoid-version,changed],-count[version-lag,request],-count[version-lag,changed],-count[missing-depexts,changed],-changed";
+     ]
   ) @
   (if pin then
      let version =
@@ -23,58 +32,77 @@ let opam_install ~variant ~opam_version ~pin ~lower_bounds ~with_tests ~pkg =
    else
      []
   ) @ [
-    run ~network "opam %s" (match opam_version with `V2_1 -> "update --depexts" | `V2_0 -> "depext -u");
+    run ~network "opam %s" (match opam_version with `V2_1 | `Dev -> "update --depexts" | `V2_0 -> "depext -u");
     (* TODO: Replace by two calls to opam install + opam install -t using the OPAMDROPINSTALLEDPACKAGES feature *)
     run ~cache ~network
-      {|opam remove %s%s && opam install --deps-only%s %s && opam install -v%s %s;
+      {|%sopam reinstall%s %s;
         res=$?;
         test "$res" != 31 && exit "$res";
         export OPAMCLI=2.0;
         build_dir=$(opam var prefix)/.opam-switch/build;
         failed=$(ls "$build_dir");
+        partial_fails="";
         for pkg in $failed; do
           if opam show -f x-ci-accept-failures: "$pkg" | grep -qF "\"%s\""; then
             echo "A package failed and has been disabled for CI using the 'x-ci-accept-failures' field.";
           fi;
+          test "$pkg" != '%s' && partial_fails="$partial_fails $pkg";
         done;
+        test "${partial_fails}" != "" && echo "opam-repo-ci detected dependencies failing: ${partial_fails}";
         exit 1|}
-      pkg (match opam_version with `V2_1 -> "" | `V2_0 -> " && opam depext"^with_tests_opt^" "^pkg) with_tests_opt pkg with_tests_opt pkg
+      (match opam_version with `V2_1 | `Dev -> "" | `V2_0 -> fmt "opam depext%s %s && " with_tests_opt pkg) with_tests_opt pkg
       (Variant.distribution variant)
+      pkg
   ]
 
 let setup_repository ~variant ~for_docker ~opam_version =
   let open Obuilder_spec in
-  user ~uid:1000 ~gid:1000 ::
-  run "for pkg in $(opam pin list --short); do opam pin remove \"$pkg\"; done" :: (* The ocaml/opam base images have a pin to their compiler package.
-                                                                                     Such pin is useless for opam 2.0 as we don't use --unlock-base,
-                                                                                     and causes issues for opam 2.1 as it allows to upgrade the compiler
-                                                                                     package (not what we want)
-                                                                                     See: https://github.com/ocaml/opam/issues/4501 *)
-  run "opam repository remove -a multicore || true" :: (* We remove this non-standard repository
-                                                          because we don't have access and it hosts
-                                                          non-official packages *)
-  run "sudo ln -f /usr/bin/opam-%s /usr/bin/opam"
-    (match opam_version with
-     | `V2_0 -> "2.0"
-     | `V2_1 -> "2.1"
-    ) ::
-  (* NOTE: [for_docker] is required because docker does not support bubblewrap in docker build *)
-  (* docker run has --privileged but docker build does not have it *)
-  (* so we need to remove the part re-enabling the sandbox. *)
-  (* NOTE: On alpine-3.12 bwrap fails with "capset failed: Operation not permitted". *)
-  let sandboxing_not_supported =
-    let distro = variant.Variant.distribution in
-    String.equal distro (Dockerfile_distro.tag_of_distro (`Alpine `V3_12)) ||
-    for_docker
+  let home_dir = match Variant.os variant with
+    | `macOS -> None
+    | `linux -> Some "/home/opam"
   in
-  run "opam init --reinit%s -ni" (if sandboxing_not_supported then "" else " --config ~/.opamrc-sandbox") ::
+  let prefix = match Variant.os variant with
+    | `macOS -> "~/local"
+    | `linux -> "/usr"
+  in
+  let ln = match Variant.os variant with
+    | `macOS -> "ln"
+    | `linux -> "sudo ln"
+  in
+  let opam_version_str = match opam_version with
+    | `V2_0 -> "2.0"
+    | `V2_1 -> "2.1"
+    | `Dev ->
+        match Variant.os variant with
+        | `macOS -> "2.1" (* TODO: Remove that when macOS has a proper up-to-date docker image *)
+        | `linux -> "dev"
+  in
+  let opam_repo_args = match Variant.os variant with
+    | `macOS -> " -k local" (* TODO: (copy ...) do not copy the content of .git or something like that and make the subsequent opam pin fail *)
+    | `linux -> ""
+  in
+  let opamrc = match Variant.os variant with
+    (* NOTE: [for_docker] is required because docker does not support bubblewrap in docker build *)
+    (* docker run has --privileged but docker build does not have it *)
+    (* so we need to remove the part re-enabling the sandbox. *)
+    | `linux when not for_docker -> " --config .opamrc-sandbox"
+    | `macOS | `linux -> ""
+    (* TODO: On macOS, the sandbox is always (and should be) enabled by default but does not have those ~/.opamrc-sandbox files *)
+  in
+  user_unix ~uid:1000 ~gid:1000 ::
+  (match home_dir with Some home_dir -> [workdir home_dir] | None -> []) @
+  (* TODO: macOS seems to have a bug in (copy ...) so I am forced to remove the (workdir ...) here.
+     Otherwise the "opam pin" after the "opam repository set-url" will fail (cannot find the new package for some reason) *)
+  run "%s -f %s/bin/opam-%s %s/bin/opam" ln prefix opam_version_str prefix ::
+  run ~network "opam init --reinit%s -ni" opamrc :: (* TODO: Remove ~network when https://github.com/ocurrent/ocaml-dockerfile/pull/132 is merged *)
   env "OPAMDOWNLOADJOBS" "1" :: (* Try to avoid github spam detection *)
   env "OPAMERRLOGLEN" "0" :: (* Show the whole log if it fails *)
   env "OPAMSOLVERTIMEOUT" "500" :: (* Increase timeout. Poor mccs is doing its best *)
   env "OPAMPRECISETRACKING" "1" :: (* Mitigate https://github.com/ocaml/opam/issues/3997 *)
   [
-    copy ["."] ~dst:"/src/";
-    run "opam repository set-url --strict default file:///src";
+    run "rm -rf opam-repository/";
+    copy ["."] ~dst:"opam-repository/";
+    run "opam repository set-url%s --strict default opam-repository/" opam_repo_args;
   ]
 
 let set_personality ~variant =
@@ -105,12 +133,11 @@ let spec ~for_docker ~opam_version ~base ~variant ~revdep ~lower_bounds ~with_te
     @ tests
   )
 
-let revdeps ~for_docker ~base ~variant ~pkg =
+let revdeps ~for_docker ~opam_version ~base ~variant ~pkg =
   let open Obuilder_spec in
   let pkg = Filename.quote (OpamPackage.to_string pkg) in
   Obuilder_spec.stage ~from:base (
-    (* TODO: Switch to opam 2.1 when https://github.com/ocaml/opam/issues/4311 is fixed *)
-    setup_repository ~variant ~for_docker ~opam_version:`V2_0
+    setup_repository ~variant ~for_docker ~opam_version
     @ [
       run "echo '@@@OUTPUT' && \
            opam list -s --color=never --depends-on %s --coinstallable-with %s --installable --all-versions --recursive --depopts && \

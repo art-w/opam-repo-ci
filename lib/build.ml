@@ -3,7 +3,15 @@ open Capnp_rpc_lwt
 open Lwt.Infix
 
 module Git = Current_git
-module Image = Current_docker.Raw.Image
+
+(* TODO: Make macOS use docker images *)
+type base =
+  | Docker of Current_docker.Raw.Image.t
+  | MacOS of string
+
+let base_to_string = function
+  | Docker img -> Current_docker.Raw.Image.hash img
+  | MacOS base -> base
 
 let ( >>!= ) = Lwt_result.bind
 
@@ -16,11 +24,15 @@ module Spec = struct
     revdep : package option;
     with_tests : bool;
     lower_bounds : bool;
-    opam_version : [`V2_0 | `V2_1];
+    opam_version : [`V2_0 | `V2_1 | `Dev];
+  } [@@deriving to_yojson]
+
+  type list_revdeps = {
+    opam_version : [`V2_0 | `V2_1 | `Dev];
   } [@@deriving to_yojson]
 
   type ty = [
-    | `Opam of [ `Build of opam_build | `List_revdeps ] * package
+    | `Opam of [ `Build of opam_build | `List_revdeps of list_revdeps ] * package
   ] [@@deriving to_yojson]
 
   type t = {
@@ -37,17 +49,20 @@ module Spec = struct
     | Some revdep -> Fmt.pf f "%s with %s" (OpamPackage.to_string revdep) (OpamPackage.to_string pkg)
     | None -> Fmt.string f (OpamPackage.to_string pkg)
 
+  let pp_opam_version = function
+    | `V2_0 -> "2.0"
+    | `V2_1 -> "2.1"
+    | `Dev -> "dev"
+
   let pp_ty f = function
-    | `Opam (`List_revdeps, pkg) ->
-        Fmt.pf f "list revdeps of %s" (OpamPackage.to_string pkg)
+    | `Opam (`List_revdeps {opam_version}, pkg) ->
+        Fmt.pf f "list revdeps of %s, using opam %s" (OpamPackage.to_string pkg)
+          (pp_opam_version opam_version)
     | `Opam (`Build { revdep; lower_bounds; with_tests; opam_version }, pkg) ->
       let action = if with_tests then "test" else "build" in
       Fmt.pf f "%s %a%s, using opam %s" action (pp_pkg ?revdep) pkg
         (if lower_bounds then ", lower-bounds" else "")
-        (match opam_version with
-         | `V2_0 -> "2.0"
-         | `V2_1 -> "2.1"
-        )
+        (pp_opam_version opam_version)
 end
 
 type t = {
@@ -84,7 +99,7 @@ module Op = struct
     config : t;
     master : Current_git.Commit.t;
     urgent : ([`High | `Low] -> bool) option;
-    base : Image.t;                           (* The image with the OCaml compiler to use. *)
+    base : base;
   }
 
   let id = "ci-ocluster-build"
@@ -122,25 +137,29 @@ module Op = struct
 
   let run { config = { connection; timeout }; master; urgent; base } job { Key.pool; commit; variant; ty } () =
     let master = Current_git.Commit.hash master in
+    let os = match Variant.os variant with
+      | `macOS | `linux -> `Unix
+    in
     let build_spec ~for_docker =
-      let base = Image.hash base in
+      let base = base_to_string base in
       match ty with
-      | `Opam (`List_revdeps, pkg) -> Opam_build.revdeps ~for_docker ~base ~variant ~pkg
+      | `Opam (`List_revdeps { opam_version }, pkg) -> Opam_build.revdeps ~for_docker ~opam_version ~base ~variant ~pkg
       | `Opam (`Build { revdep; lower_bounds; with_tests; opam_version }, pkg) -> Opam_build.spec ~for_docker ~opam_version ~base ~variant ~revdep ~lower_bounds ~with_tests ~pkg
     in
     Current.Job.write job
       (Fmt.str "@.\
                 To reproduce locally:@.@.\
+                cd $(mktemp -d)@.\
                 %a@.\
                 git fetch origin master@.\
-                git merge %s@.\
+                git merge --no-edit %s@.\
                 cat > ../Dockerfile <<'END-OF-DOCKERFILE'@.\
                 \o033[34m%s\o033[0m@.\
                 END-OF-DOCKERFILE@.\
                 docker build -f ../Dockerfile .@.@."
          Current_git.Commit_id.pp_user_clone commit
          master
-         (Obuilder_spec.Docker.dockerfile_of_spec ~buildkit:false (build_spec ~for_docker:true)));
+         (Obuilder_spec.Docker.dockerfile_of_spec ~os ~buildkit:false (build_spec ~for_docker:true)));
     let spec_str = Fmt.to_to_string Obuilder_spec.pp (build_spec ~for_docker:false) in
     let action = Cluster_api.Submission.obuilder_build spec_str in
     let src = (Git.Commit_id.repo commit, [master; Git.Commit_id.hash commit]) in
@@ -148,20 +167,20 @@ module Op = struct
       let pkg =
         match ty with
         | `Opam (`Build { revdep = Some revdep; _ }, pkg) -> Printf.sprintf "%s-%s" (OpamPackage.to_string pkg) (OpamPackage.to_string revdep)
-        | `Opam (`List_revdeps, pkg)
+        | `Opam (`List_revdeps _, pkg)
         | `Opam (`Build _, pkg) -> OpamPackage.to_string pkg
       in
-      Printf.sprintf "%s-%s-%s" (Image.hash base) pkg (Git.Commit_id.hash commit)
+      Printf.sprintf "%s-%s-%s" (base_to_string base) pkg (Git.Commit_id.hash commit)
     in
     Current.Job.log job "Using cache hint %S" cache_hint;
     Current.Job.log job "Using OBuilder spec:@.%s@." spec_str;
     let build_pool = Current_ocluster.Connection.pool ?urgent ~job ~pool ~action ~cache_hint ~src connection in
+    Current.Job.start_with ~pool:build_pool job ~timeout ~level:Current.Level.Average >>= fun build_job ->
     let buffer =
       match ty with
-      | `Opam (`List_revdeps, _) -> Some (Buffer.create 1024)
+      | `Opam (`List_revdeps _, _) -> Some (Buffer.create 1024)
       | _ -> None
     in
-    Current.Job.start_with ~pool:build_pool job ~timeout ~level:Current.Level.Average >>= fun build_job ->
     Capability.with_ref build_job (run_job ?buffer ~job) >>!= fun (_ : string) ->
     match buffer with
     | None -> Lwt_result.return ""
@@ -199,16 +218,16 @@ let v t ~label ~spec ~base ~master ~urgent commit =
   BC.run t { Op.Key.pool; commit; variant; ty } ()
   |> Current.Primitive.map_result (Result.map ignore) (* TODO: Create a separate type of cache that doesn't parse the output *)
 
-let list_revdeps t ~platform ~pkgopt ~base ~master ~after commit =
+let list_revdeps t ~platform ~opam_version ~pkgopt ~base ~master ~after commit =
   Current.component "list revdeps" |>
-  let> {PackageOpt.pkg; urgent} = pkgopt
+  let> {PackageOpt.pkg; urgent; has_tests = _} = pkgopt
   and> base = base
   and> commit = commit
   and> master = master
   and> () = after in
   let t = { Op.config = t; master; urgent; base } in
   let { Platform.pool; variant; label = _ } = platform in
-  let ty = `Opam (`List_revdeps, pkg) in
+  let ty = `Opam (`List_revdeps {Spec.opam_version}, pkg) in
   BC.run t { Op.Key.pool; commit; variant; ty } ()
   |> Current.Primitive.map_result (Result.map (fun output ->
       String.split_on_char '\n' output |>

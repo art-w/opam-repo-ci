@@ -6,10 +6,14 @@ module Spec : sig
     platform:Platform.t ->
     lower_bounds:bool ->
     with_tests:bool ->
-    opam_version:[`V2_0 | `V2_1] ->
+    opam_version:[`V2_0 | `V2_1 | `Dev] ->
     OpamPackage.t ->
     t
 end
+
+type base =
+  | Docker of Current_docker.Raw.Image.t
+  | MacOS of string
 
 type t
 
@@ -19,7 +23,7 @@ val v :
   t ->
   label:string ->
   spec:Spec.t Current.t ->
-  base:Current_docker.Raw.Image.t Current.t ->
+  base:base Current.t ->
   master:Current_git.Commit.t Current.t ->
   urgent:([`High | `Low] -> bool) option Current.t ->
   Current_git.Commit_id.t Current.t ->
@@ -28,8 +32,9 @@ val v :
 val list_revdeps :
   t ->
   platform:Platform.t ->
+  opam_version:[`V2_0 | `V2_1 | `Dev] ->
   pkgopt:PackageOpt.t Current.t ->
-  base:Current_docker.Raw.Image.t Current.t ->
+  base:base Current.t ->
   master:Current_git.Commit.t Current.t ->
   after:unit Current.t ->
   Current_git.Commit_id.t Current.t ->

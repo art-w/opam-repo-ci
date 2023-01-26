@@ -12,11 +12,12 @@ val init : unit -> unit
 
 module Job_map : module type of Astring.String.Map
 
+type job_ids = Current.job_id option Job_map.t
+
 val record :
   repo:Current_github.Repo_id.t ->
   hash:string ->
-  status:build_status ->
-  Current.job_id option Job_map.t ->
+  job_ids ->
   unit
 (** [record ~repo ~hash jobs] updates the entry for [repo, hash] to point at [jobs]. *)
 
@@ -32,12 +33,22 @@ val get_jobs : owner:string -> name:string -> string -> (string * job_state) lis
 val get_job : owner:string -> name:string -> hash:string -> variant:string -> (string option, [> `No_such_variant]) result
 (** [get_job ~owner ~name ~variant] is the last known job ID for this combination. *)
 
+val get_job_ids: owner:string -> name:string -> hash:string -> string list
+
 val get_status:
   owner:string ->
   name:string ->
   hash:string ->
   build_status
 (** [get_status ~owner ~name ~hash] is the latest status for this combination. *)
+
+val set_status:
+  owner:string ->
+  name:string ->
+  hash:string ->
+  build_status ->
+  unit
+(** [set_status ~owner ~name ~hash build_status] sets the latest status for this combination. *)
 
 val get_full_hash : owner:string -> name:string -> string -> (string, [> `Ambiguous | `Unknown | `Invalid]) result
 (** [get_full_hash ~owner ~name short_hash] returns the full hash for [short_hash]. *)

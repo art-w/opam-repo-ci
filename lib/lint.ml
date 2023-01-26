@@ -14,12 +14,12 @@ let exec ~cwd ~job cmd = Current.Process.exec ~cwd ~cancellable:true ~job ("", c
 
 type error =
   | UnnecessaryField of string
-  | MissingField of string
   | UnmatchedName of OpamPackage.Name.t
   | UnmatchedVersion of OpamPackage.Version.t
   | DubiousDuneSubst
   | DuneProjectMissing
   | DuneConstraintMissing
+  | DuneIsBuild
   | BadDuneConstraint of string * string
   | UnexpectedFile of string
   | ForbiddenPerm of string
@@ -118,6 +118,9 @@ module Check = struct
         | exn -> Lwt.fail exn
         end
 
+  let is_dune name =
+    OpamPackage.Name.equal name (OpamPackage.Name.of_string "dune")
+
   let get_dune_constraint opam =
     let get_max = function
       | None, None -> None
@@ -131,8 +134,10 @@ module Check = struct
       | Some x, Some y when OpamVersionCompare.compare x y >= 0 -> Some y
       | Some x, Some _ -> Some x
     in
+    let is_build = ref false in
     let rec get_lower_bound = function
       | OpamFormula.Atom (OpamTypes.Constraint ((`Gt | `Geq), OpamTypes.FString version)) -> Some version
+      | Atom (Filter (FIdent (_, var, _))) when String.equal (OpamVariable.to_string var) "build" -> is_build := true; None (* TODO: remove this hack *)
       | Empty | Atom (Filter _) | Atom (Constraint _) -> None
       | Block x -> get_lower_bound x
       | And (x, y) -> get_max (get_lower_bound x, get_lower_bound y)
@@ -140,8 +145,9 @@ module Check = struct
     in
     let rec aux = function
       | OpamFormula.Atom (pkg, constr) ->
-          if OpamPackage.Name.equal pkg (OpamPackage.Name.of_string "dune") then
-            Some (Option.value ~default:"1.0" (get_lower_bound constr))
+          if is_dune pkg then
+            let v = get_lower_bound constr in
+            Some (Option.value ~default:"1.0" v)
           else
             None
       | Empty -> None
@@ -149,24 +155,30 @@ module Check = struct
       | And (x, y) -> get_max (aux x, aux y)
       | Or (x, y) -> get_min (aux x, aux y)
     in
-    aux opam.OpamFile.OPAM.depends
+    (!is_build, aux opam.OpamFile.OPAM.depends)
 
   let check_dune_constraints ~errors ~pkg opam =
     match opam.OpamFile.OPAM.url with
     | Some url ->
         get_dune_project_version ~pkg url >|= fun dune_version ->
-        let dune_constraint = get_dune_constraint opam in
-        begin match dune_constraint, dune_version with
-        | _, Error msg -> (pkg, FailedToDownload msg) :: errors
-        | None, Ok None -> errors
-        | Some _, Ok None -> (pkg, DuneProjectMissing) :: errors
-        | None, Ok (Some _) -> (pkg, DuneConstraintMissing) :: errors
-        | Some dep, Ok (Some ver) ->
-            if OpamVersionCompare.compare dep ver >= 0 then
-              errors
-            else
-              (pkg, BadDuneConstraint (dep, ver)) :: errors
-        end
+        let is_build, dune_constraint = get_dune_constraint opam in
+        let errors =
+          match dune_constraint, dune_version with
+          | _, Error msg -> (pkg, FailedToDownload msg) :: errors
+          | None, Ok None -> errors
+          | Some _, Ok None -> (pkg, DuneProjectMissing) :: errors
+          | None, Ok (Some _) ->
+              if is_dune (OpamPackage.name pkg) then
+                errors
+              else
+                (pkg, DuneConstraintMissing) :: errors
+          | Some dep, Ok (Some ver) ->
+              if OpamVersionCompare.compare dep ver >= 0 then
+                errors
+              else
+                (pkg, BadDuneConstraint (dep, ver)) :: errors
+        in
+        if is_build then (pkg, DuneIsBuild) :: errors else errors
     | None ->
         Lwt.return errors
 
@@ -196,12 +208,6 @@ module Check = struct
                   (pkg, UnnecessaryField "version") :: errors
                 else
                   (pkg, UnmatchedVersion version) :: errors
-          in
-          (* Check presence of the license field *)
-          (* TODO: Get rid of this when https://github.com/ocaml/opam/issues/4598 is fixed *)
-          let errors = match OpamFile.OPAM.license opam with
-            | [] -> (pkg, MissingField "license") :: errors
-            | _ -> errors
           in
           (* Check correct use of dune subst *)
           let errors =
@@ -290,9 +296,6 @@ module Lint = struct
             pkg
             (OpamPackage.Version.to_string value)
             (OpamPackage.Version.to_string (OpamPackage.version package))
-      | MissingField field ->
-          Fmt.str "Error in %s: The field '%s' is not present."
-            pkg field
       | DubiousDuneSubst ->
           Fmt.str "Warning in %s: Dubious use of 'dune subst'. \
                    'dune subst' should always only be called with {dev} (i.e. [\"dune\" \"subst\"] {dev}) \
@@ -303,6 +306,11 @@ module Lint = struct
           Fmt.str "Warning in %s: The package seems to use dune but the dune-project file is missing." pkg
       | DuneConstraintMissing ->
           Fmt.str "Warning in %s: The package has a dune-project file but no explicit dependency on dune was found." pkg
+      | DuneIsBuild ->
+          Fmt.str "Warning in %s: The package tagged dune as a build dependency. \
+                   Due to a bug in dune (https://github.com/ocaml/dune/issues/2147) this should never be the case. \
+                   Please remove the {build} tag from its filter."
+            pkg
       | BadDuneConstraint (dep, ver) ->
           Fmt.str "Error in %s: Your dune-project file indicates that this package requires at least dune %s \
                    but your opam file only requires dune >= %s. Please check which requirement is the right one, and fix the other."
