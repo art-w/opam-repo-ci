@@ -6,9 +6,6 @@ do
   sleep 1
 done
 
-# export PWD=/app
-# dune build --watch ./web-ui/main.exe &
-
 while :
 do
   until [ -f _build/default/web-ui/main.exe ]

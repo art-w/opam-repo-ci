@@ -30,21 +30,6 @@ services:
       ocluster:
         condition: service_started
 
-        # frontend:
-        #   build:
-        #     context: ..
-        #     dockerfile: ./dev/Dockerfile.pipeline
-        #   command:
-        #     - "./dev/frontend.sh"
-        #   volumes:
-        #     - "../:/app"
-        #   ports:
-        #     - "8090:8090"
-        #   restart: always
-        #   depends_on:
-        #     pipeline:
-        #       condition: service_started
-
   ocluster:
     build:
       context: ..
@@ -69,7 +54,8 @@ services:
     restart: always
     command:
       - "ocluster-worker"
-      - "--obuilder-store=rsync:/obuilder/store"
+      - "--store=rsync:/obuilder/store"
+      - "--rsync-mode=hardlink_unsafe"
       - "--state-dir=/obuilder/state"
       - "--name=local_linux-x86_64"
       - "--connect=/app/capnp-secrets/pool-linux-x86_64.cap"

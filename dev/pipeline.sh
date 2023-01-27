@@ -1,5 +1,7 @@
 #!/bin/sh
 
+dune clean
+
 # serve local opam-repository for workers...
 if [ "$MODE" = "local" ]; then
   cd /opam-repository
@@ -45,13 +47,14 @@ if [ "$MODE" = "github" ]; then
   # update GitHub webhook url
   SECRET=$(cat "$GITHUB_WEBHOOK_SECRET_FILE")
   JWT=$(dune exec --root=. --display=quiet ./dev/jwt.exe "$GITHUB_APP_ID" "$GITHUB_PRIVATE_KEY_FILE")
+
   curl \
+    -v \
     -X PATCH \
     -H "Authorization: Bearer $JWT" \
     -H "Accept: application/vnd.github.v3+json" \
     https://api.github.com/app/hook/config \
     -d "{\"url\":\"${WEBHOOK}\",\"secret\":\"${SECRET}\"}"
-
 fi
 
 export PWD=/app
